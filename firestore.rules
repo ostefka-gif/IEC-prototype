@@ -1,0 +1,168 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users
+    // Document ID: {userId}
+    // Fields:
+    //   - uid: string (required)
+    //   - email: string (required)
+    //   - displayName: string (optional)
+    //   - role: string (required, 'student' | 'professor' | 'admin')
+    //   - createdAt: string (required)
+    //
+    // Collection: cases
+    // Document ID: {caseId}
+    // Fields:
+    //   - id: string (required)
+    //   - title: string (required)
+    //   - introText: string (optional)
+    //   - parts: list (required)
+    //   - questions: string/map (optional)
+    //   - authorId: string (required)
+    //   - createdAt: string (required)
+    //
+    // Collection: student_sessions
+    // Document ID: {sessionId}
+    // Fields:
+    //   - userId: string (required)
+    //   - caseId: string (required)
+    //   - discipline: string (required)
+    //   - partScores: map (optional)
+    //   - partIncorrectCount: map (optional)
+    //   - completedParts: number (optional)
+    //   - isComplete: boolean (optional)
+    //   - startedAt: string (required)
+    //   - lastUpdatedAt: string (required)
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+    
+    function isDocOwner() {
+      return isAuthenticated() && request.auth.uid == resource.data.userId;
+    }
+    
+    function isCaseOwner() {
+      return isAuthenticated() && request.auth.uid == resource.data.authorId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && (
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin') ||
+        (request.auth.token.email == "ostefka@nd.edu" && request.auth.token.email_verified == true)
+      );
+    }
+
+    function isProfessor() {
+      return isAuthenticated() && (
+        isAdmin() ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'professor')
+      );
+    }
+
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    function isValidDateString(dateStr) {
+      return dateStr is string &&
+        dateStr.matches("^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}.*Z?$");
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+
+    function isValidUser(data) {
+      return hasRequiredFields(['uid', 'email', 'role', 'createdAt']) &&
+             data.uid is string && data.uid.size() > 0 && data.uid.size() < 100 &&
+             data.email is string && data.email.size() > 0 && data.email.size() < 100 &&
+             data.role in ['student', 'professor', 'admin'] &&
+             (!('displayName' in data) || (data.displayName is string && data.displayName.size() < 100)) &&
+             isValidDateString(data.createdAt);
+    }
+
+    function isValidCase(data) {
+      return hasRequiredFields(['id', 'title', 'parts', 'authorId', 'createdAt']) &&
+             data.id is string && data.id.size() > 0 && data.id.size() < 100 &&
+             data.title is string && data.title.size() > 0 && data.title.size() < 200 &&
+             data.authorId is string && data.authorId.size() > 0 && data.authorId.size() < 100 &&
+             data.parts is list && data.parts.size() <= 20 &&
+             (!('introText' in data) || (data.introText is string && data.introText.size() < 10000)) &&
+             isValidDateString(data.createdAt);
+    }
+
+    function isValidStudentSession(data) {
+      return hasRequiredFields(['userId', 'caseId', 'discipline', 'startedAt', 'lastUpdatedAt']) &&
+             data.userId is string && data.userId.size() > 0 && data.userId.size() < 100 &&
+             data.caseId is string && data.caseId.size() > 0 && data.caseId.size() < 100 &&
+             data.discipline is string && data.discipline.size() > 0 && data.discipline.size() < 100 &&
+             (!('completedParts' in data) || (data.completedParts is number && data.completedParts >= 0)) &&
+             (!('isComplete' in data) || data.isComplete is bool) &&
+             isValidDateString(data.startedAt) &&
+             isValidDateString(data.lastUpdatedAt);
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && 
+                    isOwner(userId) && 
+                    isValidUser(request.resource.data) && 
+                    request.resource.data.uid == userId &&
+                    (request.resource.data.role == 'student' || isAdmin());
+      allow update: if isAuthenticated() && 
+                    isOwner(userId) && 
+                    isValidUser(request.resource.data) && 
+                    request.resource.data.uid == resource.data.uid &&
+                    (request.resource.data.role == resource.data.role || isAdmin());
+      allow delete: if isAdmin();
+    }
+
+    match /cases/{caseId} {
+      allow read: if isAuthenticated();
+      allow create: if isProfessor() && 
+                    isValidCase(request.resource.data) &&
+                    request.resource.data.authorId == request.auth.uid;
+      allow update: if isProfessor() && 
+                    isCaseOwner() && 
+                    isValidCase(request.resource.data) &&
+                    request.resource.data.authorId == resource.data.authorId;
+      allow delete: if isAdmin() || (isProfessor() && isCaseOwner());
+    }
+
+    match /student_sessions/{sessionId} {
+      allow read: if isAuthenticated() && (request.auth.uid == resource.data.userId || isProfessor());
+      allow create: if isAuthenticated() && 
+                    isValidStudentSession(request.resource.data) &&
+                    request.resource.data.userId == request.auth.uid;
+      allow update: if isAuthenticated() && 
+                    request.auth.uid == resource.data.userId &&
+                    isValidStudentSession(request.resource.data) &&
+                    request.resource.data.userId == resource.data.userId &&
+                    request.resource.data.caseId == resource.data.caseId &&
+                    request.resource.data.discipline == resource.data.discipline;
+      allow delete: if isAdmin();
+    }
+  }
+}

@@ -1,0 +1,77 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "A user of the platform, either a student or a professor.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Firebase Auth UID" },
+        "email": { "type": "string", "format": "email" },
+        "displayName": { "type": "string" },
+        "role": { "type": "string", "enum": ["student", "professor", "admin"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "role", "createdAt"]
+    },
+    "CustomCase": {
+      "title": "CustomCase",
+      "description": "A custom case study created by a professor.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "introText": { "type": "string" },
+        "parts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "title": { "type": "string" },
+              "text": { "type": "string" }
+            },
+            "required": ["id", "title", "text"]
+          }
+        },
+        "questions": {
+          "type": "object",
+          "description": "Map of discipline -> partId -> array of questions. Serialized as JSON string to bypass Firestore nested array limits, or stored as a flat structure."
+        },
+        "authorId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "title", "parts", "authorId", "createdAt"]
+    },
+    "StudentSession": {
+      "title": "StudentSession",
+      "description": "Tracks a student's progress and analytics for a specific case and discipline.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "caseId": { "type": "string" },
+        "discipline": { "type": "string" },
+        "partScores": { "type": "object", "description": "Map of partId to score" },
+        "partIncorrectCount": { "type": "object", "description": "Map of partId to number of incorrect attempts" },
+        "completedParts": { "type": "number" },
+        "isComplete": { "type": "boolean" },
+        "startedAt": { "type": "string", "format": "date-time" },
+        "lastUpdatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "caseId", "discipline", "startedAt", "lastUpdatedAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "Stores user profiles and roles."
+    },
+    "/cases/{caseId}": {
+      "schema": { "$ref": "#/entities/CustomCase" },
+      "description": "Stores custom cases created by professors."
+    },
+    "/student_sessions/{sessionId}": {
+      "schema": { "$ref": "#/entities/StudentSession" },
+      "description": "Stores student progress and analytics."
+    }
+  }
+}
